@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <sys/mman.h>
 
 char *get_prog(int argc, char **argv)
 {
@@ -175,43 +176,41 @@ executable_ins compile(Instruction ins)
     {
     case PLUS:
     {
-        uint8_t *ops = malloc(4);
+        uint8_t *ops = malloc(2);
         uint8_t *args = malloc(1);
         ops[0] = 0x80;
-        ops[1] = 0x04;
-        ops[2] = 0x24;
+        ops[1] = 0x03;
         args[0] = (uint8_t)ins.rep;
-        return (executable_ins){ops, args, 3, 1};
+        return (executable_ins){ops, args, 2, 1};
     }
     case MINUS:
     {
-        uint8_t *ops = malloc(4);
+        uint8_t *ops = malloc(2);
         uint8_t *args = malloc(1);
         ops[0] = 0x80;
-        ops[1] = 0x2c;
-        ops[2] = 0x24;
+        ops[1] = 0x2b;
         args[0] = (uint8_t)ins.rep;
-        return (executable_ins){ops, args, 3, 1};
+        return (executable_ins){ops, args, 2, 1};
     }
     case LEFT:
     {
-        uint8_t *arr = malloc(4);
-        INT_TO_U8_ARRAY(ins.rep, arr);
+        uint8_t *arr = malloc(1);
+        arr[0] = (uint8_t)ins.rep;
         uint8_t *ops = malloc(3);
         ops[0] = 0x48;
         ops[1] = 0x81;
-        ops[2] = 0xC4;
-        return (executable_ins){ops, arr, 3, 4};
+        ops[2] = 0xEB;
+        return (executable_ins){ops, arr, 3, 1};
     }
     case RIGHT:
     {
-        uint8_t *arr = malloc(4);
-        INT_TO_U8_ARRAY(ins.rep, arr);
+        uint8_t *arr = malloc(1);
+        arr[0] = (uint8_t)ins.rep;
         uint8_t *ops = malloc(3);
         ops[0] = 0x48;
-        ops[1] = 0x81;
-        ops[2] = 0xEC;
-        return (executable_ins){ops, arr, 3, 4};
+        ops[1] = 0x83;
+        ops[2] = 0xc3;
+        return (executable_ins){ops, arr, 3, 1};
     }
     case PRINT:
     {
@@ -229,7 +228,7 @@ executable_ins compile(Instruction ins)
         ops[i++] = 0x00;
         ops[i++] = 0x48;
         ops[i++] = 0x89;
-        ops[i++] = 0xE6;
+        ops[i++] = 0xDe;
         ops[i++] = 0xBA;
         ops[i++] = 0x01;
         ops[i++] = 0x00;
@@ -255,7 +254,7 @@ executable_ins compile(Instruction ins)
         ops[i++] = 0x00;
         ops[i++] = 0x48;
         ops[i++] = 0x89;
-        ops[i++] = 0xE6;
+        ops[i++] = 0xDE;
         ops[i++] = 0xBA;
         ops[i++] = 0x01;
         ops[i++] = 0x00;
@@ -308,54 +307,24 @@ void resolve_loops(executable_ins *exec_instructions, Instruction *instructions,
             loops = realloc(loops, sizeof(loop_t) * nloop);
             loops[nloop - 1] = l;
             scope++;
-            pos += 10;
+            pos += 9;
         }
         else if (instructions[i].type == LOOP_CLOSE)
         {
-            uint8_t *close_ops = malloc(5);
-            int n = 0;
-            close_ops[n++] = 0xE9;
-            uint8_t *close_args = close_ops + sizeof(uint8_t);
-
             --scope;
-            loop_t l;
-            for (int j = 0; j < nloop; ++j)
-            {
-                if (loops[j].lpos == loop_pos && loops[j].scope == scope)
-                {
-                    l = loops[j];
-                }
-            }
-            int p = pos - l.pos;
-            p = -p;
-            printf("P: %d\n", p);
-            INT_TO_U8_ARRAY(p, close_args);
-            exec_instructions[i] = (executable_ins){close_ops, 0, 5, 0};
             if (scope == 0)
             {
                 loop_pos++;
             }
             pos += 5;
-            n = 0;
-            uint8_t *ops = malloc(10);
-            ops[n++] = 0x80;
-            ops[n++] = 0x3C;
-            ops[n++] = 0x24;
-            ops[n++] = 0x00;
-            ops[n++] = 0x0F;
-            ops[n++] = 0x84;
-            int ip = 0;
-            ip = (l.pos + 10) - pos;
-            ip = -ip;
-            uint8_t *arg = ops + 6;
-            INT_TO_U8_ARRAY(ip, arg);
-            exec_instructions[l.ins_pos] = (executable_ins){ops, 0, 10, 0};
         }
         else
         {
             pos += exec_instructions[i].n_op + exec_instructions[i].n_arg;
         }
     }
+    scope = 0;
+    loop_pos = 0;
 }
 
 void print_exec(executable_ins ins)
@@ -389,13 +358,67 @@ int main(int argc, char **argv)
     resolve_loops(insts, instructions, count);
     for (int i = 0; i < count; ++i)
     {
-        // print_exec(insts[i]);
+        print_exec(insts[i]);
     }
-    FILE *out = fopen("out.bin", "wb");
+    uint8_t *buffer;
+    int sz = 0;
     for (int i = 0; i < count; ++i)
     {
-        fwrite(insts[i].ops, 1, insts[i].n_op, out);
-        fwrite(insts[i].args, 1, insts[i].n_arg, out);
+        sz += insts[i].n_op + insts[i].n_arg;
     }
-    fclose(out);
+    buffer = calloc(1, sz + 1);
+    int idx = 0;
+    for (int i = 0; i < count; ++i)
+    {
+        for (int j = 0; j < insts[i].n_op; ++j)
+        {
+            buffer[idx] = insts[i].ops[j];
+            ++idx;
+        }
+        for (int j = 0; j < insts[i].n_arg; ++j)
+        {
+            buffer[idx] = insts[i].args[j];
+            ++idx;
+        }
+        if (insts[i].args)
+        {
+            free(insts[i].args);
+        }
+        if (insts[i].ops)
+        {
+            free(insts[i].ops);
+        }
+    }
+    buffer[idx++] = 0xC3;
+    for (int i = 0; i < idx; ++i)
+    {
+        printf("%d: %x\n", i, buffer[i]);
+    }
+    FILE *f = fopen("out.bin", "wb");
+    fwrite(buffer, idx, 1, f);
+    fclose(f);
+    void *executable_memory = mmap(NULL, idx, PROT_READ | PROT_WRITE | PROT_EXEC,
+                                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (executable_memory == MAP_FAILED)
+    {
+        perror("Cannot execute, memory map failed\n");
+    }
+    printf("Executable memory is mapped\n");
+    for (int i = 0; i < idx; ++i)
+    {
+        ((uint8_t *)executable_memory)[i] = buffer[i];
+    }
+    uint8_t *memory = malloc(1024 * 8);
+    memory += 1024 * 4;
+
+    __asm__ __volatile__(
+        "mov %[input], %%rbx"
+        :
+        : [input] "r"(memory)
+        : "rbx");
+    __asm__ __volatile__(
+        "call *%0"
+        :
+        : "r"(executable_memory)
+        : "memory");
 }

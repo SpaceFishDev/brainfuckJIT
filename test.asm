@@ -1,2 +1,2 @@
-cmp [rsp], byte 0
+cmp [rbx], byte 0
 je 10
